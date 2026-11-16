@@ -109,7 +109,7 @@ Updates often replace the game folder. Go through this list after every update:
 
 These are the lines to look for in `LogOutput.log` on a working install:
 ```
-Yan Sim Mod Menu 0.20.1 loaded.
+Yan Sim Mod Menu 0.21 loaded.
 Club perk patches applied: 20/20
 Speed-up patch applied.
 Bucket spill patch applied.
@@ -143,6 +143,8 @@ changed that part of the game. The rest of the menu still works.
 ---
 
 ## Changelog
+
+**0.21** — "Speed up actions" now speeds up only the animations, not the whole game. Attack kills (yours and the victim's animation), dismembering, washing weapons, showering, and corpse disposal (dumping, dumpster, wood chipper, burying, digging) finish faster while the clock and every other student keep normal speed. Holding **`** still fast-forwards the whole game, for cutscenes.
 
 **0.20.1** — The clock is set with keys instead of sliders: numpad 4 moves it back and numpad 6 forward. Each press is 1, 5, 10, 15, 30 or 60 minutes (pick on the Debug tab); hold Shift for a whole hour. It stays between 6:00 AM and 5:59 PM, and both keys can be rebound on the Extras tab.
 

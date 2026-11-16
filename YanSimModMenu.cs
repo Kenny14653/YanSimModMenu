@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 
 namespace YanSimModMenu
 {
-    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.20.1")]
+    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.21")]
     public class ModMenuPlugin : BaseUnityPlugin
     {
         ConfigEntry<KeyCode> toggleKey;
@@ -571,6 +571,7 @@ namespace YanSimModMenu
             Safe("Student Info reputation keys", HandleInfoRepKeys);
             Safe("Pouring", UpdatePouring);
             Safe("Instant body bag", ApplyInstantWrap);
+            Safe("Action animation speed", ApplyActionAnimSpeed);
             Safe("Bring-item names", CaptureBringNames);
             Safe("Yakuza unlock", KeepYakuzaUnlocked);
         }
@@ -2138,19 +2139,11 @@ namespace YanSimModMenu
         // and sometimes a slow-motion moment. Speeding up the whole game while the kill plays keeps
         // all of that in step; time goes back to what it was the moment the kill ends.
         // Runs in LateUpdate so it wins over the game's own slow motion.
+        // Only the held fast-forward key speeds up the whole game now; the action boxes speed up
+        // just the animations (ApplyActionAnimSpeed).
         void ApplyAttackSpeed()
         {
-            bool attacking = false;
-            if (!open && yan != null)
-            {
-                if (fastAttack) attacking = yan.Attacking || (yan.AttackManager != null && yan.AttackManager.IsAttacking());
-                if (fastDismember && yan.Dismembering) attacking = true;
-                if (fastWash && yan.CleaningWeapon) attacking = true;
-                if (fastShower && yan.Bathing) attacking = true;
-                if (fastDispose && (yan.Dumping || yan.DumpsterGrabbing || yan.Chipping || yan.Burying || yan.Digging)) attacking = true;
-            }
-            // Held fast-forward works anywhere, including cutscenes in other scenes.
-            if (!open && rebinding < 0 && fastForwardKey != null && Input.GetKey(fastForwardKey.Value)) attacking = true;
+            bool attacking = !open && rebinding < 0 && fastForwardKey != null && Input.GetKey(fastForwardKey.Value);
             if (attacking)
             {
                 if (!attackBoosting) { attackBoosting = true; attackRestoreScale = Time.timeScale > 0f ? Time.timeScale : 1f; }
@@ -2161,6 +2154,76 @@ namespace YanSimModMenu
                 attackBoosting = false;
                 if (Time.timeScale > 0f) Time.timeScale = attackRestoreScale;
             }
+        }
+
+        // Speeds up only the animations, not the game's clock. These actions end when Yandere's
+        // animation reaches its end (dismembering, washing, burying, digging, the dumpster, the
+        // shower), so a faster animation finishes them sooner. Attack kills use the game's own
+        // attack speed (AttackManager.AnimSpeed, which it sets to 2 itself in one case) for both
+        // Yandere and the victim. Dumping a body and the wood chipper also run a timer, which is
+        // pushed along at the same rate. Speeds are put back when the action ends.
+        readonly Dictionary<AnimationState, float> animSpeedChanged = new Dictionary<AnimationState, float>();
+
+        void ApplyActionAnimSpeed()
+        {
+            float sp = Mathf.Max(1f, attackSpeed);
+            bool active = false;
+            if (!open && yan != null && sp > 1.001f)
+            {
+                AttackManagerScript am = yan.AttackManager;
+                bool attackKill = fastAttack && am != null && am.IsAttacking();
+                if (attackKill)
+                {
+                    active = true;
+                    SpeedState(am.YandereAnim, am.AnimName, sp);
+                    SpeedState(am.VictimAnim, am.VictimAnimName, sp);
+                    am.AnimSpeed = sp;
+                }
+                bool yanAction = (fastAttack && yan.Attacking) || (fastDismember && yan.Dismembering) || (fastWash && yan.CleaningWeapon) ||
+                                 (fastShower && yan.Bathing) ||
+                                 (fastDispose && (yan.Dumping || yan.DumpsterGrabbing || yan.Chipping || yan.Burying || yan.Digging));
+                if (yanAction && yan.CharacterAnimation != null)
+                {
+                    active = true;
+                    foreach (AnimationState st in yan.CharacterAnimation)
+                        if (st != null && st.enabled && st.weight > 0.01f) SpeedState(st, sp);
+                    if (fastDispose && (yan.Dumping || yan.Chipping)) yan.DumpTimer += Time.deltaTime * (sp - 1f);
+                    if (fastShower && yan.Bathing)
+                        foreach (YandereShowerScript sh in FindAllSceneCached<YandereShowerScript>())
+                            if (sh != null && sh.isActiveAndEnabled) sh.Timer += Time.deltaTime * (sp - 1f);
+                }
+            }
+            if (!active && animSpeedChanged.Count > 0)
+            {
+                foreach (KeyValuePair<AnimationState, float> kv in animSpeedChanged)
+                    if (kv.Key != null && kv.Key.speed > kv.Value) kv.Key.speed = kv.Value;
+                animSpeedChanged.Clear();
+            }
+        }
+
+        void SpeedState(Animation anim, string name, float sp)
+        {
+            if (anim == null || string.IsNullOrEmpty(name)) return;
+            AnimationState st = anim[name];
+            if (st != null) SpeedState(st, sp);
+        }
+
+        void SpeedState(AnimationState st, float sp)
+        {
+            if (!animSpeedChanged.ContainsKey(st)) animSpeedChanged[st] = st.speed > 0f && st.speed < sp ? st.speed : 1f;
+            if (st.speed < sp) st.speed = sp;
+        }
+
+        readonly Dictionary<Type, object[]> sceneCache = new Dictionary<Type, object[]>();
+        StudentManagerScript sceneCacheScene;
+
+        // FindAllScene once per scene for things that don't come and go (the showers).
+        T[] FindAllSceneCached<T>() where T : Component
+        {
+            if (sceneCacheScene != manager) { sceneCache.Clear(); sceneCacheScene = manager; }
+            object[] found;
+            if (!sceneCache.TryGetValue(typeof(T), out found)) { found = FindAllScene<T>().Cast<object>().ToArray(); sceneCache[typeof(T)] = found; }
+            return found.Cast<T>().ToArray();
         }
 
         // The Void Goddess is normally only switched on by the debug enabler. Her prompt reads
@@ -3395,8 +3458,8 @@ namespace YanSimModMenu
             fastShower = GUILayout.Toggle(fastShower, "Showering", GUILayout.Width(150));
             fastDispose = GUILayout.Toggle(fastDispose, "Corpse disposal (incinerator, dumpster, wood chipper, burying)");
             GUILayout.EndHorizontal();
-            GUILayout.Label("The whole game runs at that speed only while the action plays, then goes back to normal. Hold " + fastForwardKey.Value +
-                            " to fast-forward anything else, like cutscenes (voiced lines keep their normal speed, so some scenes still wait for the voice).");
+            GUILayout.Label("Only the animations speed up (yours, and the victim's for attack kills); the clock and everyone else stay at normal speed. Hold " + fastForwardKey.Value +
+                            " to fast-forward the whole game instead, for cutscenes (voiced lines keep their normal speed, so some scenes still wait for the voice).");
 
             if (GUILayout.Button("Teleport blood-clean kit to me (mop, bucket, bleach, body bag box)  [" + cleanupKey.Value + "]")) CleanupKit();
             instantDisposal = GUILayout.Toggle(instantDisposal, "No time limit on disposal: incinerator, kiln and washing machine finish instantly");
