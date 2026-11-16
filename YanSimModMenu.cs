@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 
 namespace YanSimModMenu
 {
-    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.19")]
+    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.19.1")]
     public class ModMenuPlugin : BaseUnityPlugin
     {
         ConfigEntry<KeyCode> toggleKey;
@@ -2034,6 +2034,14 @@ namespace YanSimModMenu
                 Logger.LogInfo("Bucket spill patch applied.");
             }
             catch (Exception e) { Logger.LogWarning("Bucket spill patch failed: " + e.Message); }
+            try
+            {
+                harmony.Patch(AccessTools.Method(typeof(ChangingBoothScript), "Update"),
+                    prefix: new HarmonyMethod(typeof(ModMenuPlugin).GetMethod("BoothPrefix")),
+                    finalizer: new HarmonyMethod(typeof(ModMenuPlugin).GetMethod("BoothFinalizer")));
+                Logger.LogInfo("Club changing booth patch applied.");
+            }
+            catch (Exception e) { Logger.LogWarning("Club changing booth patch failed: " + e.Message); }
             Type[] types = { typeof(FootprintScript), typeof(FootprintSpawnerScript), typeof(SecurityCameraScript), typeof(ShutterScript), typeof(ShutterScript),
                 typeof(StruggleBarScript), typeof(StudentScript), typeof(StudentScript), typeof(StudentScript), typeof(StudentScript), typeof(StudentScript),
                 typeof(StudentScript), typeof(StudentScript), typeof(TaskManagerScript), typeof(WeaponScript), typeof(WeaponScript), typeof(YandereScript),
@@ -2344,6 +2352,26 @@ namespace YanSimModMenu
                 __instance.Yandere.NoDebug = true;
                 __state = true;
             }
+        }
+
+        // Club changing booths only offer "change" when Yandere.Club matches the booth, and
+        // ChangeClubwear picks the outfit from Yandere.Club. With all club perks on, the player
+        // counts as that booth's club for the length of the booth's own Update, so any club's
+        // booth works and hands out that club's outfit. Her real club is put back right after.
+        public static void BoothPrefix(ChangingBoothScript __instance, out int __state)
+        {
+            __state = -1;
+            if (!allClubPerks || __instance == null || __instance.Yandere == null) return;
+            ClubType booth = __instance.ClubID;
+            if (booth == ClubType.None || booth == ClubType.Delinquent || booth == ClubType.Bully || booth == ClubType.Council) return;
+            if (__instance.Yandere.Club == booth) return;
+            __state = (int)__instance.Yandere.Club;
+            __instance.Yandere.Club = booth;
+        }
+
+        public static void BoothFinalizer(ChangingBoothScript __instance, int __state)
+        {
+            if (__state >= 0 && __instance != null && __instance.Yandere != null) __instance.Yandere.Club = (ClubType)__state;
         }
 
         public static void BucketFinalizer(BucketScript __instance, bool __state)

@@ -107,10 +107,11 @@ Updates often replace the game folder. Go through this list after every update:
 
 These are the lines to look for in `LogOutput.log` on a working install:
 ```
-Yan Sim Mod Menu 0.19 loaded.
+Yan Sim Mod Menu 0.19.1 loaded.
 Club perk patches applied: 20/20
 Speed-up patch applied.
 Bucket spill patch applied.
+Club changing booth patch applied.
 Bucket trip reputation patch applied.
 ```
 If the number in "Club perk patches applied" is lower than 20, or a line says "failed", a game update
@@ -140,6 +141,8 @@ changed that part of the game. The rest of the menu still works.
 ---
 
 ## Changelog
+
+**0.19.1** — With "all club perks" on, every club's changing booth works for you and gives you that club's outfit, not just your own club's (Delinquents, bullies and the student council excluded).
 
 **0.19**
 - Instant rejection: lowering the rival's reputation (gossip, rumors and so on) now fills the bar too, not only sabotaging her events with Senpai. The Students tab shows the bar (x/5) and has a "Fill it now" button. She's still rejected at Friday's confession, which is when the game checks.
