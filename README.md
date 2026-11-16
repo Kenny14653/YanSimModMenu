@@ -52,11 +52,18 @@ These are for playing with the menu **closed**. You can rebind every key on the 
 | **B** | Fill the bucket you hold, or the nearest one, with water, blood or gasoline |
 | **Left Ctrl** / **RB** | While carrying a bucket and moving: bucket trip, or giggle |
 | **V** | Teleport a blood-cleaning kit to you (mop, bucket, bleach, body bag box) |
+| **N** | Teleport the drinking-fountain electrocution kit to you (wrench, screwdriver, power strip) |
+| **J** | Tripwire kit: get string and masking tape, and bring a knife, the water cooler and a bucket |
+| **U** | Teleport the dismemberment kit to you (circular saw and tarp) |
+| **H** | Teleport the cover-up kit to you (raincoat, occult robe, gloves) |
+| **`** (hold) | Fast-forward anything while held, cutscenes included |
+| **Z** | Start / stop pouring the bucket you're holding. It never runs dry and leaves a trail of puddles (can be switched off on the Extras tab) |
+| **+** / **-** on the Student Info screen | Raise or lower that student's reputation by 10 (hold Shift for 1) |
 | **P** | Add info points |
 | **K** | Switch rival elimination shortcut (off / matchmaking / rejection / expel), then **Enter** to confirm or **Backspace** to cancel |
 | **=** (+) / numpad **+** | Speed up time like the debug menu: 2x, 3x, 4x, 5x, 10x, 15x, 20x, 25x |
 | **-** / numpad **-** | Time back to normal |
-| **Left Alt + 1–9** | Teleport: 1 School front · 2 Classroom 2-1 · 3 Computer lab · 4 Rooftop · 5 Shower room · 6 Martial Arts · 7 Occult · 8 Gardening · 9 Light Music |
+| **Left Alt + 1–9** | Teleport: 1 School front · 2 Classroom 2-1 · 3 Computer lab · 4 Rooftop · 5 Shower room · 6 Martial Arts · 7 Occult · 8 Gardening · 9 Light Music. Each of the 9 keys can be rebound on the Extras tab; Left Alt is still held with them |
 
 ### The tabs
 - **Player:** lock sanity and health, move speed, keep all stats maxed, money, keep reputation at 100.
@@ -100,9 +107,10 @@ Updates often replace the game folder. Go through this list after every update:
 
 These are the lines to look for in `LogOutput.log` on a working install:
 ```
-Yan Sim Mod Menu 0.15.1 loaded.
+Yan Sim Mod Menu 0.19 loaded.
 Club perk patches applied: 20/20
 Speed-up patch applied.
+Bucket spill patch applied.
 Bucket trip reputation patch applied.
 ```
 If the number in "Club perk patches applied" is lower than 20, or a line says "failed", a game update
@@ -132,6 +140,35 @@ changed that part of the game. The rest of the menu still works.
 ---
 
 ## Changelog
+
+**0.19**
+- Instant rejection: lowering the rival's reputation (gossip, rumors and so on) now fills the bar too, not only sabotaging her events with Senpai. The Students tab shows the bar (x/5) and has a "Fill it now" button. She's still rejected at Friday's confession, which is when the game checks.
+- Speed up actions (Weapons tab): attack kills, dismembering, washing weapons, showering, and corpse disposal (incinerator, dumpster, wood chipper, burying), all with one speed slider (1–10x).
+- Hold **`** to fast-forward anything, cutscenes included. Voiced lines keep their normal speed, so a scene that waits for its voice line still waits.
+- **H** teleports the cover-up kit: raincoat, occult robe and gloves.
+
+**0.18**
+- Instant body bag wrapping (Weapons tab): the wrap finishes in a fraction of a second.
+- Speed up attack kills (Weapons tab), 1–10x: the game runs faster only while the kill plays, then goes back to normal.
+- Bring extra from home (Items tab): every school day, also bring any of the 3 bring-item weapons and any of the other bring-item items (poisons, sake, cigarettes, condoms, lockpick, narcotics, explosive device), on top of the game's own pick. Weapons go straight to your hands while you have a free slot; the rest are put next to you.
+- Each of the 9 teleport locations has its own rebindable key (Extras tab), still pressed together with Left Alt.
+- Always have the Void Goddess at school ("Summon An Ancient Evil"), without the debug menu (Students tab). The game marks runs that use her as invalid, the same as the debug menu.
+- The tripwire kit no longer fills the water cooler: it brings a bucket instead, so you choose the liquid.
+- **U** teleports the dismemberment kit (circular saw and tarp).
+
+**0.17** — Faster loading screens (Extras tab, on by default). Unity is allowed to spend more of each frame on loading, and the loading screen starts loading the school right away instead of counting 10 frames first. How much faster depends on your PC; most of the wait is the game building the school and its students.
+
+**0.16.2** — Fixed the keys (K, N, J, Z, P, teleports) not working at home: one check threw an error there every frame.
+
+**0.16.1** — **Z** is now an endless pour you switch on and off. While it's on, the bucket you hold leaves a puddle of whatever is in it (water, blood, gasoline or brown paint) every half second or every few steps, and never runs dry. Press Z again to stop. It also stops when you put the bucket down. The game's own Z still does nothing, and the Extras-tab checkbox switches the key off completely.
+
+**0.16**
+- **N** teleports the drinking-fountain electrocution kit to you. Wrench the fountain to make a puddle, turn the light off, use the screwdriver on the outlet, then turn the light on when she's in the puddle.
+- **Z** spills the full bucket you're holding, without needing the game's debug keys. A checkbox on the Extras tab switches it off, so nothing spills it by key, not even the game's own Z.
+- **+** / **-** on the Student Info screen raise or lower that student's reputation by 10, or by 1 while holding Shift. Time speed keys don't react while that screen is open.
+- **J** tripwire kit: gives you string and masking tape, brings a knife and a water cooler, and fills the cooler if it's empty (with blood on the difficulty that needs mud).
+- Students tab: always unlock the yakuza with every service (1980s).
+- Students tab: always know the rival's embarrassing secret (for gossip) and her dark secret (the photographer secret, for a locker note).
 
 **0.15.1** — Each part of the menu now runs on its own. Before, one error repeating every frame (for example in a scene that part didn't expect) silently switched off everything after it, including instant rejection, expel and matchmaking and the K key. Errors are now logged with the part's name, once every 10 seconds.
 

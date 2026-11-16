@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using BepInEx;
@@ -20,7 +21,7 @@ using UnityEngine.SceneManagement;
 
 namespace YanSimModMenu
 {
-    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.15.1")]
+    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.19")]
     public class ModMenuPlugin : BaseUnityPlugin
     {
         ConfigEntry<KeyCode> toggleKey;
@@ -47,6 +48,30 @@ namespace YanSimModMenu
         // Debug-menu style time keys: + steps 1,2,3,4,5,10,15,20,25 ; - back to normal
         ConfigEntry<KeyCode> timeUpKey, timeResetKey;
         ConfigEntry<KeyCode> elimKey;
+        ConfigEntry<KeyCode> elecKey, tripKey, spillKey, dismemberKey;
+        readonly ConfigEntry<KeyCode>[] teleSlotKeys = new ConfigEntry<KeyCode>[9];
+        ConfigEntry<bool> cfgInstantWrap, cfgFastAttack, cfgVoidGoddess, cfgExtraBring;
+        ConfigEntry<float> cfgAttackSpeed;
+        ConfigEntry<string> cfgExtraBringIds, cfgBringNames;
+        bool instantWrap, fastAttack, voidGoddess, extraBring, attackBoosting;
+        ConfigEntry<bool> cfgFastDismember, cfgFastWash, cfgFastShower, cfgFastDispose;
+        ConfigEntry<KeyCode> fastForwardKey, coverKey;
+        bool fastDismember, fastWash, fastShower, fastDispose;
+        StudentManagerScript rejectScene; float rivalRepBaseline = float.NaN;
+        float attackSpeed = 3f, attackRestoreScale = 1f;
+        readonly HashSet<int> extraBringIds = new HashSet<int>();
+        string[] bringNames;
+        int bringNamesScene = -1;
+        StudentManagerScript bringScene, goddessScene;
+        ConfigEntry<bool> cfgSpillKeyOn, cfgAlwaysYakuza, cfgRivalSecrets;
+        bool spillKeyOn = true, alwaysYakuza, rivalSecrets, pouring;
+        ConfigEntry<bool> cfgFastLoading;
+        bool fastLoading = true, fastLoadingApplied;
+        SceneLoader loaderSeen;
+        int loaderSceneChecked = -1;
+        float pourTimer;
+        float yakuzaTimer;
+        StudentInfoScript infoCache; StudentManagerScript infoScene;
         int elimPending = -1; // method waiting for "Are you sure?" (-1 = none)
         static readonly string[] ElimNames = { "Off (no shortcut)", "Instant matchmaking", "Instant rejection", "Instant expel" };
         public static float hotkeyScale = 1f;
@@ -307,6 +332,14 @@ namespace YanSimModMenu
             timeUpKey = Config.Bind("Keys", "TimeFasterKey", KeyCode.Equals, "Speed up time like the debug menu (+1 up to 5x, then +5 up to 25x). Numpad + also works.");
             timeResetKey = Config.Bind("Keys", "TimeNormalKey", KeyCode.Minus, "Set time back to normal speed. Numpad - also works.");
             elimKey = Config.Bind("Keys", "EliminationMethodKey", KeyCode.K, "Cycle the rival elimination shortcut (off / matchmaking / rejection / expel); Enter confirms, Backspace cancels.");
+            elecKey = Config.Bind("Keys", "ElectrocutionKitKey", KeyCode.N, "Teleport the drinking-fountain electrocution kit (wrench, screwdriver, power strip) to you.");
+            tripKey = Config.Bind("Keys", "TripwireKitKey", KeyCode.J, "Give the tripwire items (string, masking tape) and bring a knife and a filled water cooler.");
+            fastForwardKey = Config.Bind("Keys", "FastForwardHoldKey", KeyCode.BackQuote, "Hold to fast-forward anything (cutscenes too) at the action speed.");
+            coverKey = Config.Bind("Keys", "CoverUpKitKey", KeyCode.H, "Teleport the things that hide blood to you (raincoat, occult robe, gloves).");
+            dismemberKey = Config.Bind("Keys", "DismembermentKitKey", KeyCode.U, "Teleport the dismemberment kit (circular saw and tarp) to you.");
+            for (int i = 0; i < 9; i++)
+                teleSlotKeys[i] = Config.Bind("Keys", "TeleportKey" + (i + 1), KeyCode.Alpha1 + i, "Teleport to " + TeleName[i] + " (held together with the teleport modifier key).");
+            spillKey = Config.Bind("Keys", "SpillBucketKey", KeyCode.Z, "Start / stop pouring the bucket you're holding (it never runs dry).");
             cfgMaxStats = Config.Bind("Saved", "KeepStatsMaxed", false, "Keep every stat at 5.");
             cfgMaxRep = Config.Bind("Saved", "KeepReputationMaxed", false, "Keep reputation at 100.");
             cfgAlphaAlways = Config.Bind("Saved", "AlphabetToolsAlways", false, "Always turn on the Alphabet Challenge tools.");
@@ -323,6 +356,21 @@ namespace YanSimModMenu
             cfgInfBags = Config.Bind("Saved", "InfiniteBodyBags", false, "The body bag box never runs out.");
             cfgInfoAmount = Config.Bind("Saved", "InfoPointsPerPress", 20, "Info points added per key press.");
             cfgAutoGifts = Config.Bind("Saved", "AutoGiftShop", false, "Own every gift-shop gift (Senpai and matchmaking gifts) every time a scene loads.");
+            cfgInstantWrap = Config.Bind("Saved", "InstantBodyBagWrap", false, "Wrapping a corpse in a body bag finishes almost instantly.");
+            cfgFastAttack = Config.Bind("Saved", "FastAttackKills", false, "Speed up attack kills (the whole game runs faster only while the kill plays).");
+            cfgAttackSpeed = Config.Bind("Saved", "AttackKillSpeed", 3f, "How fast attack kills play, 1-10x.");
+            cfgFastDismember = Config.Bind("Saved", "FastDismember", false, "Speed up dismembering.");
+            cfgFastWash = Config.Bind("Saved", "FastWeaponWashing", false, "Speed up washing blood off weapons (sinks, drinking fountain).");
+            cfgFastShower = Config.Bind("Saved", "FastShower", false, "Speed up showering.");
+            cfgFastDispose = Config.Bind("Saved", "FastCorpseDisposal", false, "Speed up getting rid of corpses: incinerator, dumpster, wood chipper, burying.");
+            cfgVoidGoddess = Config.Bind("Saved", "AlwaysVoidGoddess", false, "Always have the Void Goddess at school ('Summon An Ancient Evil'), without the debug menu.");
+            cfgExtraBring = Config.Bind("Saved", "BringExtraFromHome", false, "Bring the extra items and weapons ticked in the Items tab every school day.");
+            cfgExtraBringIds = Config.Bind("Saved", "ExtraBringIds", "", "Bring-from-home IDs to bring as extras (comma separated).");
+            cfgBringNames = Config.Bind("Saved", "BringItemNames", "", "Names of the bring-from-home items, read from the game's own menu.");
+            cfgFastLoading = Config.Bind("Saved", "FastLoading", true, "Faster loading screens: Unity may spend more of each frame loading, and the loading screen starts right away.");
+            cfgSpillKeyOn = Config.Bind("Saved", "SpillKeyOn", true, "The pour key starts / stops an endless pour. Off: no key pours, not even the game's own Z.");
+            cfgAlwaysYakuza = Config.Bind("Saved", "AlwaysUnlockYakuza", false, "Keep the yakuza unlocked with every service (1980s).");
+            cfgRivalSecrets = Config.Bind("Saved", "AlwaysKnowRivalSecrets", false, "Always know the rival's embarrassing secret (gossip) and dark secret (locker note).");
             cfgWeeklyWatchers = Config.Bind("Saved", "WeeklyRivalWatchers", true, "1980s Custom Mode: more students watch the rival each week (week 1: none, week 10: 6 extra).");
             cfgInstantMatch = Config.Bind("Saved", "InstantMatchmaking", false, "Max the rival/suitor affection so the rival confesses to her suitor at the end of the first day (202X and 1980s).");
             pauseWhileOpen = Config.Bind("General", "PauseWhileOpen", true, "Pause the game (timeScale 0) while the menu is open.");
@@ -379,6 +427,18 @@ namespace YanSimModMenu
             teleKeys = cfgTeleKeys.Value; teleAlt = cfgTeleAlt.Value; infBattery = cfgInfBattery.Value; infBags = cfgInfBags.Value;
             infoAmount = Mathf.Clamp(cfgInfoAmount.Value, 1, 999);
             autoGifts = cfgAutoGifts.Value; instantMatch = cfgInstantMatch.Value; weeklyWatchers = cfgWeeklyWatchers.Value;
+            fastLoading = cfgFastLoading.Value;
+            fastDismember = cfgFastDismember.Value; fastWash = cfgFastWash.Value; fastShower = cfgFastShower.Value; fastDispose = cfgFastDispose.Value;
+            instantWrap = cfgInstantWrap.Value; fastAttack = cfgFastAttack.Value; attackSpeed = Mathf.Clamp(cfgAttackSpeed.Value, 1f, 10f);
+            voidGoddess = cfgVoidGoddess.Value; extraBring = cfgExtraBring.Value;
+            extraBringIds.Clear();
+            foreach (string part in (cfgExtraBringIds.Value ?? "").Split(','))
+            {
+                int bid;
+                if (int.TryParse(part.Trim(), out bid) && bid >= 1 && bid <= 12) extraBringIds.Add(bid);
+            }
+            if (!string.IsNullOrEmpty(cfgBringNames.Value)) bringNames = cfgBringNames.Value.Split('|');
+            spillKeyOn = cfgSpillKeyOn.Value; alwaysYakuza = cfgAlwaysYakuza.Value; rivalSecrets = cfgRivalSecrets.Value;
             cfgInstantDisposal = Config.Bind("Saved", "InstantCorpseDisposal", false, "The incinerator and kiln finish instantly and can be used again right away.");
             instantDisposal = cfgInstantDisposal.Value;
             cfgNemesisVision = Config.Bind("Saved", "NemesisInYandereVision", false, "Mission Mode: outline Nemesis in purple while Yandere vision is on.");
@@ -444,6 +504,11 @@ namespace YanSimModMenu
                 cfgTeleKeys.Value = teleKeys; cfgTeleAlt.Value = teleAlt; cfgInfBattery.Value = infBattery; cfgInfBags.Value = infBags;
                 cfgInfoAmount.Value = infoAmount;
                 cfgAutoGifts.Value = autoGifts; cfgInstantMatch.Value = instantMatch; cfgWeeklyWatchers.Value = weeklyWatchers;
+                cfgSpillKeyOn.Value = spillKeyOn; cfgFastLoading.Value = fastLoading;
+                cfgFastDismember.Value = fastDismember; cfgFastWash.Value = fastWash; cfgFastShower.Value = fastShower; cfgFastDispose.Value = fastDispose;
+                cfgInstantWrap.Value = instantWrap; cfgFastAttack.Value = fastAttack; cfgAttackSpeed.Value = attackSpeed;
+                cfgVoidGoddess.Value = voidGoddess; cfgExtraBring.Value = extraBring;
+                cfgExtraBringIds.Value = string.Join(",", extraBringIds.OrderBy(x => x).Select(x => x.ToString()).ToArray()); cfgAlwaysYakuza.Value = alwaysYakuza; cfgRivalSecrets.Value = rivalSecrets;
                 cfgInstantDisposal.Value = instantDisposal;
                 cfgNemesisVision.Value = nemesisVision;
                 cfgNoteHelper.Value = noteHelper;
@@ -480,6 +545,7 @@ namespace YanSimModMenu
             refreshTimer -= Time.unscaledDeltaTime;
             if (refreshTimer <= 0f) { refreshTimer = 1f; Refresh(); }
 
+            Safe("Fast loading", ApplyFastLoading);
             Safe("Time keys", HandleTimeKeys);
             if (!open && hotkeyScale > 1.001f) { if (Time.timeScale > 0f) Time.timeScale = hotkeyScale; } // 0 = a game pause screen, leave it
             else if (!open && gameSpeedOn && !(yan != null && yan.SenpaiGazing && fastSpeedUp)) Time.timeScale = gameSpeed;
@@ -494,6 +560,11 @@ namespace YanSimModMenu
             Safe("Bucket giggle", HandleBucketGiggle);
             Safe("v0.6 features", HandleV06);
             Safe("Eliminations and automatic options", HandleV07);
+            Safe("Student Info reputation keys", HandleInfoRepKeys);
+            Safe("Pouring", UpdatePouring);
+            Safe("Instant body bag", ApplyInstantWrap);
+            Safe("Bring-item names", CaptureBringNames);
+            Safe("Yakuza unlock", KeepYakuzaUnlocked);
         }
 
         readonly Dictionary<string, float> safeLogged = new Dictionary<string, float>();
@@ -515,6 +586,7 @@ namespace YanSimModMenu
 
         void LateUpdate()
         {
+            try { ApplyAttackSpeed(); } catch (Exception e) { Logger.LogWarning("Attack speed: " + e.Message); fastAttack = false; }
             MaintainInfiniteItems();
             try { HandleNemesisVision(); } catch (Exception e) { Logger.LogWarning("Nemesis vision: " + e.Message); nemesisVision = false; }
             try { UpdateNoteHelper(); } catch (Exception e) { Logger.LogWarning("Note helper: " + e.Message); noteHelper = false; }
@@ -1013,6 +1085,30 @@ namespace YanSimModMenu
             GUILayout.Label("=== INFINITE-USE OBJECTS ===");
             infBattery = GUILayout.Toggle(infBattery, "Infinite car battery (works again a few seconds after each electrocution)");
             infBags = GUILayout.Toggle(infBags, "Unlimited body bag box (never runs out of bags)");
+
+            GUILayout.Space(10);
+            GUILayout.Label("=== BRING EXTRA FROM HOME ===");
+            extraBring = GUILayout.Toggle(extraBring, "Every school day, also bring everything ticked below");
+            GUILayout.Label("This is on top of what you pick in the game's own bring-item menu at home. Names come from that menu once you've opened it.");
+            GUILayout.Label("Weapons:");
+            GUILayout.BeginHorizontal();
+            for (int id = 1; id <= 3; id++) BringToggle(id);
+            GUILayout.EndHorizontal();
+            GUILayout.Label("Items:");
+            for (int id = 4; id <= 12; id++)
+            {
+                if ((id - 4) % 3 == 0) GUILayout.BeginHorizontal();
+                BringToggle(id);
+                if ((id - 4) % 3 == 2 || id == 12) GUILayout.EndHorizontal();
+            }
+        }
+
+        void BringToggle(int id)
+        {
+            bool on = extraBringIds.Contains(id);
+            bool now = GUILayout.Toggle(on, BringName(id), GUILayout.Width(190));
+            if (now && !on) extraBringIds.Add(id);
+            if (!now && on) extraBringIds.Remove(id);
         }
 
         void DrawBombRow(string label, ref float slider, ref int count, ref bool managed, int kind)
@@ -1574,6 +1670,15 @@ namespace YanSimModMenu
             KeyRow("Speed up time (+)", timeUpKey, 8);
             KeyRow("Time back to normal (-)", timeResetKey, 9);
             KeyRow("Switch elimination method", elimKey, 10);
+            KeyRow("Teleport electrocution kit", elecKey, 11);
+            KeyRow("Tripwire kit", tripKey, 12);
+            KeyRow("Pour bucket on / off", spillKey, 13);
+            KeyRow("Teleport dismemberment kit", dismemberKey, 14);
+            KeyRow("Teleport cover-up kit", coverKey, 24);
+            KeyRow("Hold to fast-forward", fastForwardKey, 25);
+            GUILayout.Label("Teleport keys (pressed together with " + teleModKey.Value + "):");
+            for (int i = 0; i < 9; i++) KeyRow("   " + TeleName[i], teleSlotKeys[i], 15 + i);
+            spillKeyOn = GUILayout.Toggle(spillKeyOn, "Pour key works (off: no key pours, not even the game's own Z)");
             GUILayout.BeginHorizontal();
             GUILayout.Label("Info points per press: " + infoAmount, GUILayout.Width(210));
             infoAmount = Mathf.RoundToInt(GUILayout.HorizontalSlider(infoAmount, 1f, 100f));
@@ -1591,6 +1696,13 @@ namespace YanSimModMenu
                 timeUpKey.Value = KeyCode.Equals;
                 timeResetKey.Value = KeyCode.Minus;
                 elimKey.Value = KeyCode.K;
+                elecKey.Value = KeyCode.N;
+                tripKey.Value = KeyCode.J;
+                spillKey.Value = KeyCode.Z;
+                dismemberKey.Value = KeyCode.U;
+                coverKey.Value = KeyCode.H;
+                fastForwardKey.Value = KeyCode.BackQuote;
+                for (int i = 0; i < 9; i++) teleSlotKeys[i].Value = KeyCode.Alpha1 + i;
                 rebinding = -1;
                 Config.Save();
                 status = "Keybinds reset.";
@@ -1612,7 +1724,11 @@ namespace YanSimModMenu
             {
                 if (e.keyCode != KeyCode.Escape)
                 {
-                    ConfigEntry<KeyCode> target = (new ConfigEntry<KeyCode>[] { toggleKey, throwKey, bucketKey, giggleKey, cleanupKey, bombCycleKey, infoKey, teleModKey, timeUpKey, timeResetKey, elimKey })[Mathf.Clamp(rebinding, 0, 10)];
+                    List<ConfigEntry<KeyCode>> all = new List<ConfigEntry<KeyCode>> { toggleKey, throwKey, bucketKey, giggleKey, cleanupKey, bombCycleKey, infoKey, teleModKey, timeUpKey, timeResetKey, elimKey, elecKey, tripKey, spillKey, dismemberKey };
+                    all.AddRange(teleSlotKeys);
+                    all.Add(coverKey);
+                    all.Add(fastForwardKey);
+                    ConfigEntry<KeyCode> target = all[Mathf.Clamp(rebinding, 0, all.Count - 1)];
                     target.Value = e.keyCode;
                     Config.Save();
                     status = "Key set to " + e.keyCode + ".";
@@ -1910,6 +2026,14 @@ namespace YanSimModMenu
         void InitHarmony()
         {
             harmony = new Harmony("local.yansim.modmenu");
+            try
+            {
+                harmony.Patch(AccessTools.Method(typeof(BucketScript), "Update"),
+                    prefix: new HarmonyMethod(typeof(ModMenuPlugin).GetMethod("BucketPrefix")),
+                    finalizer: new HarmonyMethod(typeof(ModMenuPlugin).GetMethod("BucketFinalizer")));
+                Logger.LogInfo("Bucket spill patch applied.");
+            }
+            catch (Exception e) { Logger.LogWarning("Bucket spill patch failed: " + e.Message); }
             Type[] types = { typeof(FootprintScript), typeof(FootprintSpawnerScript), typeof(SecurityCameraScript), typeof(ShutterScript), typeof(ShutterScript),
                 typeof(StruggleBarScript), typeof(StudentScript), typeof(StudentScript), typeof(StudentScript), typeof(StudentScript), typeof(StudentScript),
                 typeof(StudentScript), typeof(StudentScript), typeof(TaskManagerScript), typeof(WeaponScript), typeof(WeaponScript), typeof(YandereScript),
@@ -1973,6 +2097,445 @@ namespace YanSimModMenu
                 Logger.LogInfo("Patched " + type.Name + "." + method + ".");
             }
             catch (Exception e) { Logger.LogWarning(type.Name + "." + method + " patch failed: " + e.Message); }
+        }
+
+        // ---------------- v0.18 ----------------
+
+        // Wrapping a corpse plays Yandere's ConcealAnim; the wrap finishes when that animation
+        // reaches its end (YandereScript.UpdateMovement -> StopWrappingCorpse). Playing it at 20x
+        // finishes the wrap in a fraction of a second, through the game's own ending.
+        void ApplyInstantWrap()
+        {
+            if (!instantWrap || yan == null || !yan.WrappingCorpse || yan.CharacterAnimation == null || string.IsNullOrEmpty(yan.ConcealAnim)) return;
+            AnimationState st = yan.CharacterAnimation[yan.ConcealAnim];
+            if (st != null && st.speed < 20f) st.speed = 20f;
+        }
+
+        // Attack kills run through AttackManagerScript, with its own timers, the victim's animation
+        // and sometimes a slow-motion moment. Speeding up the whole game while the kill plays keeps
+        // all of that in step; time goes back to what it was the moment the kill ends.
+        // Runs in LateUpdate so it wins over the game's own slow motion.
+        void ApplyAttackSpeed()
+        {
+            bool attacking = false;
+            if (!open && yan != null)
+            {
+                if (fastAttack) attacking = yan.Attacking || (yan.AttackManager != null && yan.AttackManager.IsAttacking());
+                if (fastDismember && yan.Dismembering) attacking = true;
+                if (fastWash && yan.CleaningWeapon) attacking = true;
+                if (fastShower && yan.Bathing) attacking = true;
+                if (fastDispose && (yan.Dumping || yan.DumpsterGrabbing || yan.Chipping || yan.Burying || yan.Digging)) attacking = true;
+            }
+            // Held fast-forward works anywhere, including cutscenes in other scenes.
+            if (!open && rebinding < 0 && fastForwardKey != null && Input.GetKey(fastForwardKey.Value)) attacking = true;
+            if (attacking)
+            {
+                if (!attackBoosting) { attackBoosting = true; attackRestoreScale = Time.timeScale > 0f ? Time.timeScale : 1f; }
+                if (Time.timeScale > 0f) Time.timeScale = Mathf.Max(1f, attackSpeed);
+            }
+            else if (attackBoosting)
+            {
+                attackBoosting = false;
+                if (Time.timeScale > 0f) Time.timeScale = attackRestoreScale;
+            }
+        }
+
+        // The Void Goddess is normally only switched on by the debug enabler. Her prompt reads
+        // "Summon An Ancient Evil"; once summoned she can Pass Judgement, Follow or be dismissed.
+        // The game marks a run that uses her as invalid, the same as with the debug menu.
+        void KeepVoidGoddess()
+        {
+            goddessScene = manager;
+            if (MissionModeGlobals.MissionMode) return;
+            DebugEnablerScript de = FindObjectOfType<DebugEnablerScript>(true);
+            if (de == null || de.VoidGoddess == null) { Logger.LogInfo("Void Goddess not found in this scene."); return; }
+            if (!de.VoidGoddess.activeSelf) de.VoidGoddess.SetActive(true);
+            Logger.LogInfo("Void Goddess enabled.");
+        }
+
+        // Saw (circular saw, weapon 7, or any chainsaw) and a tarp to lay the body on.
+        void DismembermentKit()
+        {
+            if (yan == null) { status = "Player not found."; return; }
+            List<string> got = new List<string>(), miss = new List<string>();
+            DebugMenuScript dm = FindObjectOfType<DebugMenuScript>(true);
+            WeaponScript saw = null;
+            if (dm != null && dm.CircularSaw != null) saw = dm.CircularSaw.GetComponent<WeaponScript>();
+            if (saw == null) saw = FindWeapon(w => w.WeaponID == 7 || w.Chainsaw);
+            if (saw != null) { BringWeaponTo(saw, FrontOfPlayer(1.4f, 0.4f) - yan.transform.right * 0.4f); got.Add(string.IsNullOrEmpty(saw.Name) ? "saw" : saw.Name); }
+            else miss.Add("saw");
+
+            PickUpScript tarp = null;
+            foreach (PickUpScript pu in FindAllScene<PickUpScript>())
+            {
+                if (pu == null || !pu.Tarp || pu == yan.PickUp) continue;
+                if (tarp == null || (!tarp.gameObject.activeInHierarchy && pu.gameObject.activeInHierarchy)) tarp = pu;
+            }
+            if (tarp != null) { BringPickUp(tarp, FrontOfPlayer(1.6f, 0.5f) + yan.transform.right * 0.4f); got.Add("tarp"); }
+            else miss.Add("tarp");
+            status = got.Count > 0 ? "Dismemberment kit: " + string.Join(", ", got.ToArray()) + (miss.Count > 0 ? "  (not found: " + string.Join(", ", miss.ToArray()) + ")" : "")
+                                   : "Dismemberment kit not found in this scene.";
+        }
+
+        // Things that keep blood off your uniform: the raincoat (RaincoatScript), and the GloveScript
+        // pickups, which are the gloves, the occult robe and the raincoat-style coverings.
+        void CoverUpKit()
+        {
+            if (yan == null) { status = "Player not found."; return; }
+            List<string> got = new List<string>();
+            int n = 0;
+            GloveScript robe = null, coat = null, gloves = null;
+            foreach (GloveScript g in FindAllScene<GloveScript>())
+            {
+                if (g == null || g.PickUp == null || g.PickUp == yan.PickUp) continue;
+                if (g.OccultRobe) { if (robe == null || (!robe.gameObject.activeInHierarchy && g.gameObject.activeInHierarchy)) robe = g; }
+                else if (g.Raincoat) { if (coat == null || (!coat.gameObject.activeInHierarchy && g.gameObject.activeInHierarchy)) coat = g; }
+                else if (gloves == null || (!gloves.gameObject.activeInHierarchy && g.gameObject.activeInHierarchy)) gloves = g;
+            }
+            foreach (KeyValuePair<string, GloveScript> kv in new[] { new KeyValuePair<string, GloveScript>("occult robe", robe), new KeyValuePair<string, GloveScript>("raincoat", coat), new KeyValuePair<string, GloveScript>("gloves", gloves) })
+            {
+                if (kv.Value == null) continue;
+                BringPickUp(kv.Value.PickUp, FrontOfPlayer(1.4f, 0.4f) + yan.transform.right * (0.5f * n++ - 0.5f));
+                got.Add(kv.Value.gameObject.activeInHierarchy ? kv.Key : kv.Key + " (not active in this mode)");
+            }
+            if (coat == null && !yan.WearingRaincoat)
+            {
+                RaincoatScript rc = FindAllScene<RaincoatScript>().FirstOrDefault(x => x != null);
+                if (rc != null) { BringObject(rc.gameObject, FrontOfPlayer(1.4f, 0.4f) + yan.transform.right * (0.5f * n++ - 0.5f)); got.Add("raincoat"); }
+            }
+            status = got.Count > 0 ? "Cover-up kit: " + string.Join(", ", got.ToArray()) + ". Put one on before you get bloody." : "No raincoat, robe or gloves found in this scene.";
+        }
+
+        // ---- bring extra from home ----
+        // The game's bring-item menu allows one ID (PlayerGlobals.BringingItem):
+        //   1-3  weapons (WeaponManager.BroughtWeapons[id], handed to you at the start of the day)
+        //   4 rat poison, 5 sake, 6 cigarettes, 7 condoms, 8 lockpick, 9 sedative, 10 narcotics,
+        //   11 lethal poison, 12 explosive device  (InventoryScript.Start)
+        // Extras are applied the same way, once per school day, on top of the game's own pick.
+        static readonly string[] DefaultBringNames = { "", "Brought weapon 1", "Brought weapon 2", "Brought weapon 3", "Rat poison", "Sake",
+            "Cigarettes", "Condoms", "Lockpick", "Sedative", "Narcotics", "Lethal poison", "Explosive device" };
+
+        string BringName(int id)
+        {
+            if (bringNames != null && id < bringNames.Length && !string.IsNullOrEmpty(bringNames[id])) return bringNames[id];
+            return id < DefaultBringNames.Length ? DefaultBringNames[id] : "Item " + id;
+        }
+
+        // Read the real names from the game's bring-item menu (at home), once per scene.
+        void CaptureBringNames()
+        {
+            if (manager != null) return;
+            int scene = SceneManager.GetActiveScene().handle;
+            if (scene == bringNamesScene) return;
+            bringNamesScene = scene;
+            BringItemScript bi = FindObjectOfType<BringItemScript>(true);
+            if (bi == null || bi.Labels == null) return;
+            string[] names = new string[13];
+            for (int i = 1; i < 13 && i < bi.Labels.Length; i++)
+            {
+                if (bi.Labels[i] == null) continue;
+                string t = System.Text.RegularExpressions.Regex.Replace(bi.Labels[i].text ?? "", @"\[[^\]]*\]", "").Trim();
+                if (t.Length > 0 && t.IndexOf('?') < 0) names[i] = t.Replace("|", "/");
+            }
+            if (bringNames != null)
+                for (int i = 1; i < 13; i++)
+                    if (string.IsNullOrEmpty(names[i]) && i < bringNames.Length) names[i] = bringNames[i];
+            bringNames = names;
+            cfgBringNames.Value = string.Join("|", names.Select(n => n ?? "").ToArray());
+            Logger.LogInfo("Bring-item names read from the home menu.");
+        }
+
+        void ApplyExtraBring()
+        {
+            if (yan == null || yan.Inventory == null) return;
+            bringScene = manager;
+            if (MissionModeGlobals.MissionMode || extraBringIds.Count == 0) return;
+            int chosen = PlayerGlobals.BringingItem;   // the game already gave you this one
+            InventoryScript inv = yan.Inventory;
+            List<string> got = new List<string>();
+            foreach (int id in extraBringIds.Where(x => x >= 4).OrderBy(x => x))
+            {
+                if (id == chosen) continue;
+                switch (id)
+                {
+                    case 4: inv.ArrivedWithRatPoison = true; inv.EmeticPoisons++; break;
+                    case 5: inv.ArrivedWithSake = true; inv.Sake = true; break;
+                    case 6: inv.ArrivedWithCigs = true; inv.Cigs = true; break;
+                    case 7: inv.ArrivedWithCondoms = true; inv.Condoms = true; break;
+                    case 8: inv.LockPicks = Math.Max(inv.LockPicks, 0) + 1; break;
+                    case 9: inv.ArrivedWithSedative = true; inv.SedativePoisons++; break;
+                    case 10: inv.ArrivedWithNarcotics = true; inv.Narcotics = true; break;
+                    case 11: inv.ArrivedWithPoison = true; inv.LethalPoisons++; break;
+                    case 12: if (inv.ExplosiveDeviceSet != null) inv.ExplosiveDeviceSet.SetActive(true); break;
+                    default: continue;
+                }
+                got.Add(BringName(id));
+            }
+
+            WeaponManagerScript wm = FindObjectOfType<WeaponManagerScript>();
+            if (wm != null && wm.BroughtWeapons != null && yan.Weapon != null)
+            {
+                int free = 0;
+                for (int s = 1; s <= 2 && s < yan.Weapon.Length; s++) if (yan.Weapon[s] == null) free++;
+                int placed = 0;
+                foreach (int id in extraBringIds.Where(x => x >= 1 && x <= 3).OrderBy(x => x))
+                {
+                    if (id == chosen || id >= wm.BroughtWeapons.Length || wm.BroughtWeapons[id] == null) continue;
+                    WeaponScript w = wm.BroughtWeapons[id];
+                    if (Array.IndexOf(yan.Weapon, w) >= 0) continue;
+                    w.gameObject.SetActive(true);
+                    if (free > 0 && w.Prompt != null && w.Prompt.Circle != null && w.Prompt.Circle.Length > 3)
+                    {
+                        // Same as the game does for the weapon you picked at home: picked up straight away.
+                        w.Prompt.Circle[3].fillAmount = 0f;
+                        w.UnequipImmediately = true;
+                        free--;
+                    }
+                    else BringObject(w.gameObject, FrontOfPlayer(1.2f, 0.4f) + yan.transform.right * (0.4f * placed++));
+                    got.Add(string.IsNullOrEmpty(w.Name) ? BringName(id) : w.Name);
+                }
+            }
+            if (got.Count > 0)
+            {
+                Logger.LogInfo("Brought extra from home: " + string.Join(", ", got.ToArray()));
+                Toast("Also brought from home: " + string.Join(", ", got.ToArray()));
+            }
+        }
+
+        // ---------------- Faster loading ----------------
+        // Two things the game leaves on the table:
+        // 1. Unity's background loading priority. At Normal it spends about 10 ms of each frame
+        //    finishing loaded assets on the main thread; at High it may use up to 50 ms, so a scene
+        //    that loads with LoadSceneAsync (the school, from the loading screen) finishes sooner.
+        // 2. SceneLoader (the loading screen with the controls) counts 10 frames before it even
+        //    starts loading the school. That count is skipped.
+        // The rest of the wait is the game itself building the school and its 100 students.
+        void ApplyFastLoading()
+        {
+            if (fastLoading != fastLoadingApplied || (fastLoading && Application.backgroundLoadingPriority != ThreadPriority.High))
+            {
+                Application.backgroundLoadingPriority = fastLoading ? ThreadPriority.High : ThreadPriority.Normal;
+                if (fastLoading != fastLoadingApplied) Logger.LogInfo("Faster loading " + (fastLoading ? "on" : "off") + ".");
+                fastLoadingApplied = fastLoading;
+            }
+            if (!fastLoading) return;
+            if (loaderSeen == null)
+            {
+                // Look once per scene; the loading screen is its own scene.
+                int scene = SceneManager.GetActiveScene().handle;
+                if (scene == loaderSceneChecked) return;
+                loaderSceneChecked = scene;
+                loaderSeen = FindObjectOfType<SceneLoader>();
+                if (loaderSeen == null) return;
+            }
+            if (!loaderSeen.Debugging && loaderSeen.Timer < 10f) loaderSeen.Timer = 10f;   // its Update starts loading at exactly 10
+        }
+
+        // ---------------- v0.16 ----------------
+
+        // The game spills a full bucket on Z only when debug keys are on (Yandere.NoDebug false).
+        // The mod's spill key replaces it: during the bucket's own Update NoDebug is forced on, so
+        // the game's Z does nothing and only the spill key (if switched on) spills.
+        public static void BucketPrefix(BucketScript __instance, out bool __state)
+        {
+            __state = false;
+            if (__instance != null && __instance.Yandere != null && !__instance.Yandere.NoDebug)
+            {
+                __instance.Yandere.NoDebug = true;
+                __state = true;
+            }
+        }
+
+        public static void BucketFinalizer(BucketScript __instance, bool __state)
+        {
+            if (__state && __instance != null && __instance.Yandere != null) __instance.Yandere.NoDebug = false;
+        }
+
+        // Endless pour: the key switches it on and off. While on, the bucket leaves a puddle of
+        // whatever it holds (water, blood, gasoline, brown paint) every half second or every 0.75 m
+        // you walk, using the game's own Spill(), and it never runs dry. It stops by itself when you
+        // put the bucket down or it's empty to begin with.
+        void TogglePouring()
+        {
+            if (pouring) { pouring = false; Toast("Stopped pouring."); return; }
+            if (!spillKeyOn) return;
+            BucketScript b = HeldBucket();
+            if (b == null) { Toast("Hold a bucket to pour it."); return; }
+            if (!b.Full) { Toast("The bucket is empty. Fill it first (B)."); return; }
+            pouring = true;
+            pourTimer = 1f;   // first puddle right away
+            Toast("Pouring " + BucketLiquid(b) + "... press " + spillKey.Value + " to stop.");
+        }
+
+        void UpdatePouring()
+        {
+            if (!pouring) return;
+            BucketScript b = HeldBucket();
+            if (b == null || !b.Full || !spillKeyOn) { pouring = false; Toast("Stopped pouring."); return; }
+            pourTimer += Time.deltaTime;
+            if (pourTimer < 0.5f && Vector3.Distance(yan.transform.position, b.LastSpillPosition) <= 0.75f) return;
+            if (!b.CheckForGround()) return;
+            pourTimer = 0f;
+            b.Spill();
+        }
+
+        BucketScript HeldBucket()
+        {
+            if (yan == null || yan.PickUp == null) return null;
+            return yan.PickUp.Bucket;
+        }
+
+        static string BucketLiquid(BucketScript b)
+        {
+            if (b.DyedBrown) return "brown paint";
+            if (b.Gasoline) return "gasoline";
+            if (b.Bloodiness > 0f) return "blood";
+            return "water";
+        }
+
+        // The game's own kit from the debug menu; if that isn't in the scene, the wrench (fountain,
+        // weapon 24) and screwdriver (power outlet, weapon 6) are found and brought instead.
+        void ElectrocutionKit()
+        {
+            if (yan == null) { status = "Player not found."; return; }
+            DebugMenuScript dm = FindObjectOfType<DebugMenuScript>(true);
+            if (dm != null && dm.ElectrocutionKit != null && dm.ElectrocutionKit.Length > 0)
+            {
+                for (int i = 0; i < dm.ElectrocutionKit.Length; i++)
+                {
+                    if (dm.ElectrocutionKit[i] == null) continue;
+                    if (dm.ElectrocutionKit[i].transform.parent != null && !dm.ElectrocutionKit[i].transform.parent.gameObject.activeInHierarchy)
+                        dm.ElectrocutionKit[i].transform.SetParent(null, true);
+                    dm.ElectrocutionKit[i].transform.position = FrontOfPlayer(1.5f, 0.3f) + yan.transform.right * (0.4f * i);
+                }
+                if (dm.ElectrocutionKit.Length > 3 && dm.ElectrocutionKit[3] != null) dm.ElectrocutionKit[3].SetActive(true);
+                status = "Electrocution kit: wrench the fountain, turn the light off, screwdriver the outlet, then turn the light on when she's in the puddle.";
+                return;
+            }
+            List<string> got = new List<string>();
+            WeaponScript wrench = FindWeapon(w => w.WeaponID == 24), driver = FindWeapon(w => w.WeaponID == 6);
+            if (wrench != null) { BringWeaponTo(wrench, FrontOfPlayer(1.5f, 0.4f) - yan.transform.right * 0.3f); got.Add(wrench.Name); }
+            if (driver != null) { BringWeaponTo(driver, FrontOfPlayer(1.5f, 0.4f) + yan.transform.right * 0.3f); got.Add(driver.Name); }
+            status = got.Count > 0 ? "Electrocution kit: " + string.Join(", ", got.ToArray()) + ". Wrench the fountain, turn the light off, screwdriver the outlet."
+                                   : "Electrocution kit not found in this scene.";
+        }
+
+        // A weapon in the scene that isn't already in your hands or inventory.
+        WeaponScript FindWeapon(Func<WeaponScript, bool> match)
+        {
+            WeaponScript best = null;
+            foreach (WeaponScript w in FindAllScene<WeaponScript>())
+            {
+                if (w == null || !match(w)) continue;
+                if (yan.Weapon != null && Array.IndexOf(yan.Weapon, w) >= 0) return w;   // you already have one
+                if (best == null || (!best.gameObject.activeInHierarchy && w.gameObject.activeInHierarchy)) best = w;
+            }
+            return best;
+        }
+
+        void BringWeaponTo(WeaponScript w, Vector3 pos)
+        {
+            if (yan.Weapon != null && Array.IndexOf(yan.Weapon, w) >= 0) return;
+            if (w.transform.parent != null && !w.transform.parent.gameObject.activeInHierarchy) w.transform.SetParent(null, true);
+            BringObject(w.gameObject, pos);
+        }
+
+        // Water cooler tripwire: the cooler needs liquid in it, and you need string, masking tape
+        // and a knife (any weapon of type Knife) to set the trap. The cooler isn't filled for you:
+        // a bucket comes along so you pick the liquid.
+        void TripwireKit()
+        {
+            if (yan == null || yan.Inventory == null) { status = "Player not found."; return; }
+            List<string> got = new List<string>(), miss = new List<string>();
+            yan.Inventory.String = true;
+            yan.Inventory.MaskingTape = true;
+            got.Add("string"); got.Add("masking tape");
+
+            WeaponScript knife = FindWeapon(w => (int)w.Type == 1);
+            if (knife != null) { BringWeaponTo(knife, FrontOfPlayer(1.4f, 0.4f) - yan.transform.right * 0.4f); got.Add(knife.Name); }
+            else miss.Add("knife");
+
+            WaterCoolerScript cooler = null;
+            foreach (WaterCoolerScript wc in FindAllScene<WaterCoolerScript>())
+            {
+                if (wc == null || wc.TrapSet) continue;
+                if (cooler == null || (!cooler.gameObject.activeInHierarchy && wc.gameObject.activeInHierarchy)) cooler = wc;
+            }
+            if (cooler != null)
+            {
+                if (cooler.PickUp != null && cooler.PickUp != yan.PickUp) BringPickUp(cooler.PickUp, FrontOfPlayer(1.6f, 0.5f) + yan.transform.right * 0.4f);
+                else if (cooler.PickUp == null) BringObject(cooler.gameObject, FrontOfPlayer(1.6f, 0.5f) + yan.transform.right * 0.4f);
+                got.Add("water cooler");
+            }
+            else miss.Add("water cooler");
+
+            // A bucket so you choose the liquid yourself: fill it (B, or a tap), then pour it in the cooler.
+            BucketScript bucket = null;
+            foreach (BucketScript b in FindAllScene<BucketScript>())
+            {
+                if (b == null || b.PickUp == null || b.PickUp == yan.PickUp) continue;
+                if (bucket == null || (bucket.Full && !b.Full) || (!bucket.gameObject.activeInHierarchy && b.gameObject.activeInHierarchy)) bucket = b;
+            }
+            if (bucket != null) { BringPickUp(bucket.PickUp, FrontOfPlayer(1.4f, 0.4f) + yan.transform.right * 0.9f); got.Add("bucket"); }
+            else miss.Add("bucket");
+            status = "Tripwire kit: " + string.Join(", ", got.ToArray()) + (miss.Count > 0 ? "  (not found: " + string.Join(", ", miss.ToArray()) + ")" : "") +
+                     ". Fill the bucket with what you want and pour it into the cooler, then carry the knife and set the cooler down.";
+        }
+
+        // The Student Info screen (pause menu): + / - change the shown student's reputation by 10,
+        // or by 1 while Shift is held. Saved for the game at the end of the day like normal.
+        StudentInfoScript StudentInfoShowing()
+        {
+            if (manager == null) return null;
+            if (infoScene != manager) { infoScene = manager; infoCache = FindObjectOfType<StudentInfoScript>(true); }
+            StudentInfoScript si = infoCache;
+            return si != null && si.gameObject.activeInHierarchy && si.CurrentStudent > 0 ? si : null;
+        }
+
+        void HandleInfoRepKeys()
+        {
+            if (open) return;
+            bool up = KeyDown(KeyCode.Equals) || KeyDown(KeyCode.KeypadPlus) || KeyDown(KeyCode.Plus);
+            bool down = KeyDown(KeyCode.Minus) || KeyDown(KeyCode.KeypadMinus);
+            if (!up && !down) return;
+            StudentInfoScript si = StudentInfoShowing();
+            if (si == null || manager.StudentReps == null || si.CurrentStudent >= manager.StudentReps.Length) return;
+            int id = si.CurrentStudent;
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            float step = (shift ? 1f : 10f) * (up ? 1f : -1f);
+            float v = Mathf.Clamp(Mathf.Round(manager.StudentReps[id] + step), -100f, 100f);
+            manager.StudentReps[id] = v;
+            try { StudentGlobals.SetStudentReputation(id, (int)v); } catch (Exception) { }
+            si.UpdateInfo(id);
+            Toast("Reputation: " + (v > 0 ? "+" : "") + v.ToString("0"));
+        }
+
+        // Yakuza: phase 0 = not met yet, 100 = every service introduced (what Custom Mode uses).
+        // Not touched while the yakuza menu itself is open, so its cutscenes aren't cut short.
+        void KeepYakuzaUnlocked()
+        {
+            if (!alwaysYakuza) return;
+            yakuzaTimer -= Time.unscaledDeltaTime;
+            if (yakuzaTimer > 0f) return;
+            yakuzaTimer = 2f;
+            if (GameGlobals.YakuzaPhase >= 100) return;
+            if (FindObjectOfType<YakuzaMenuScript>() != null) return;
+            GameGlobals.IntroducedAbduction = true;
+            GameGlobals.IntroducedRansom = true;
+            GameGlobals.YakuzaPhase = 100;
+            Logger.LogInfo("Yakuza unlocked (phase 100).");
+        }
+
+        // Embarrassing secret: what reading her diary or buying the service gives (gossip topic).
+        // Dark secret: the photographer secret from the diary (locker-note subject). Both are kept
+        // for today and saved for the rest of the week.
+        void KnowRivalSecrets()
+        {
+            if (!manager.EmbarassingSecret) manager.EmbarassingSecret = true;
+            EndOfDayScript eod = manager.Police != null ? manager.Police.EndOfDay : null;
+            if (eod != null && !eod.LearnedAboutPhotographer) eod.LearnedAboutPhotographer = true;
+            if (!SchemeGlobals.EmbarassingSecret) SchemeGlobals.EmbarassingSecret = true;
+            if (!EventGlobals.LearnedAboutPhotographer) EventGlobals.LearnedAboutPhotographer = true;
         }
 
         // ---------------- Blood-clean kit ----------------
@@ -2065,11 +2628,16 @@ namespace YanSimModMenu
         void ApplyInstantEliminations()
         {
             // Rejection: each sabotaged rival/Senpai interaction adds 1 to SabotageProgress; 5 on Friday = rejected.
-            if (instantReject && manager != null && manager.SabotageProgress > manager.InitialSabotageProgress && manager.SabotageProgress < 5)
+            // Damaging her reputation (gossip, rumors, photos...) counts too: the confession also fails
+            // at -100 reputation.
+            if (instantReject && manager != null)
             {
-                manager.SabotageProgress = 5;
-                Toast("Rejection bar filled: 5/5 (100%)");
-                Logger.LogInfo("Instant rejection: sabotage progress set to 5/5.");
+                float rivalRep = RivalRep();
+                if (rejectScene != manager) { rejectScene = manager; rivalRepBaseline = rivalRep; }
+                bool sabotaged = manager.SabotageProgress > manager.InitialSabotageProgress;
+                bool repDropped = !float.IsNaN(rivalRep) && !float.IsNaN(rivalRepBaseline) && rivalRep < rivalRepBaseline - 0.5f;
+                if ((sabotaged || repDropped) && manager.SabotageProgress < 5) FillRejection(sabotaged ? "sabotage" : "her reputation dropped");
+                if (!float.IsNaN(rivalRep) && (float.IsNaN(rivalRepBaseline) || rivalRep > rivalRepBaseline)) rivalRepBaseline = rivalRep;
             }
             // Expel: each report the counselor accepts adds 1 to RivalExpelProgress (saved at the end of
             // the day). At 5 she is expelled a few seconds after the lecture ends.
@@ -2086,6 +2654,21 @@ namespace YanSimModMenu
             }
         }
 
+        float RivalRep()
+        {
+            if (manager == null || manager.StudentReps == null) return float.NaN;
+            int id = manager.RivalID;
+            return id > 0 && id < manager.StudentReps.Length ? manager.StudentReps[id] : float.NaN;
+        }
+
+        void FillRejection(string why)
+        {
+            if (manager == null) return;
+            manager.SabotageProgress = 5;
+            Toast("Rejection bar filled: 5/5. She'll be rejected at Friday's confession.");
+            Logger.LogInfo("Instant rejection (" + why + "): sabotage progress set to 5/5.");
+        }
+
         void HandleV07Rest()
         {
 
@@ -2099,6 +2682,9 @@ namespace YanSimModMenu
                 if (undoMatchPending && manager != null && Time.timeSinceLevelLoad > 2f) UndoMatchmaking();
                 if (weeklyWatchers && manager != null && watchScene != manager && Time.timeSinceLevelLoad > 3f) Safe("Rival watchers", AddWeeklyWatchers);
                 if (alphaAlways && manager != null && Time.timeSinceLevelLoad > 2f) Safe("Alphabet tools", KeepAlphabetTools);
+                if (rivalSecrets && manager != null && Time.timeSinceLevelLoad > 2f) Safe("Rival secrets", KnowRivalSecrets);
+                if (voidGoddess && manager != null && goddessScene != manager && Time.timeSinceLevelLoad > 2f) Safe("Void Goddess", KeepVoidGoddess);
+                if (extraBring && manager != null && bringScene != manager && Time.timeSinceLevelLoad > 3f) Safe("Bring extra items", ApplyExtraBring);
                 if ((infBattery || infBags) && manager != null && Time.timeSinceLevelLoad > 2f) Safe("Infinite objects", KeepInfiniteObjects);
                 if ((autoBefriend || autoTasks || autoInfo || autoLikes) && manager != null && autoScene != manager && Time.timeSinceLevelLoad > 3f)
                 {
@@ -2126,16 +2712,25 @@ namespace YanSimModMenu
             }
             if (KeyDown(infoKey.Value)) { AddInfoPoints(infoAmount); Toast(status); }
             Safe("Elimination key", HandleElimKeys);
+            if (KeyDown(elecKey.Value)) Safe("Electrocution kit", () => { ElectrocutionKit(); Toast(status); });
+            if (KeyDown(tripKey.Value)) Safe("Tripwire kit", () => { TripwireKit(); Toast(status); });
+            if (KeyDown(dismemberKey.Value)) Safe("Dismemberment kit", () => { DismembermentKit(); Toast(status); });
+            if (KeyDown(coverKey.Value)) Safe("Cover-up kit", () => { CoverUpKit(); Toast(status); });
+            if (KeyDown(spillKey.Value)) Safe("Pour bucket", TogglePouring);
             bool modHeld = false;
             try { modHeld = teleModKey.Value != KeyCode.None && Input.GetKey(teleModKey.Value); } catch (Exception) { }
             // Without the modifier, never teleport while your hands are busy: the game uses
             // the number keys for dropping / switching what you hold.
-            bool handsBusy = yan.PickUp != null || yan.Carrying || yan.Dragging || yan.Armed;
+            bool armed = false;
+            try { armed = yan.Armed; } catch (Exception) { }   // throws at home, where there are no weapon slots
+            bool handsBusy = yan.PickUp != null || yan.Carrying || yan.Dragging || armed;
             if (teleKeys && (teleAlt ? modHeld : !handsBusy))
             {
                 for (int i = 0; i < 9; i++)
                 {
-                    if (KeyDown(KeyCode.Alpha1 + i) || KeyDown(KeyCode.Keypad1 + i))
+                    KeyCode k = teleSlotKeys[i] != null ? teleSlotKeys[i].Value : KeyCode.Alpha1 + i;
+                    // The keypad digit still works for slots left on their default number key.
+                    if (KeyDown(k) || (k == KeyCode.Alpha1 + i && KeyDown(KeyCode.Keypad1 + i)))
                     {
                         TeleportTo(TeleSpot[i], i == 1 ? new Vector3(0.75f, 0f, 0f) : Vector3.zero);
                         Toast(status == "Teleported." ? "Teleported: " + TeleName[i] : status);
@@ -2424,7 +3019,7 @@ namespace YanSimModMenu
 
         void HandleTimeKeys()
         {
-            if (open) return;
+            if (open || StudentInfoShowing() != null) return;   // + and - change reputation there
             bool up = KeyDown(timeUpKey.Value) || KeyDown(KeyCode.KeypadPlus);
             bool reset = KeyDown(timeResetKey.Value) || KeyDown(KeyCode.KeypadMinus);
             if (up)
@@ -2728,21 +3323,29 @@ namespace YanSimModMenu
             GUILayout.Space(10);
             GUILayout.Label("=== MURDER METHODS ===");
 
-            if (GUILayout.Button("Bring electrocution kit (wrench, screwdriver, power strip, snacks)"))
-            {
-                DebugMenuScript dm = FindObjectOfType<DebugMenuScript>(true);
-                if (dm != null && dm.ElectrocutionKit != null && dm.ElectrocutionKit.Length > 0)
-                {
-                    for (int i = 0; i < dm.ElectrocutionKit.Length; i++)
-                    {
-                        if (dm.ElectrocutionKit[i] == null) continue;
-                        dm.ElectrocutionKit[i].transform.position = FrontOfPlayer(1.5f, 0.3f) + yan.transform.right * (0.4f * i);
-                    }
-                    if (dm.ElectrocutionKit.Length > 3 && dm.ElectrocutionKit[3] != null) dm.ElectrocutionKit[3].SetActive(true);
-                    status = "Electrocution kit moved next to you.";
-                }
-                else status = "Electrocution kit not found in this scene.";
-            }
+            if (GUILayout.Button("Bring electrocution kit (wrench, screwdriver, power strip, snacks)  [" + elecKey.Value + "]")) ElectrocutionKit();
+            if (GUILayout.Button("Tripwire kit: string + masking tape, bring a knife, the water cooler and a bucket  [" + tripKey.Value + "]")) TripwireKit();
+            if (GUILayout.Button("Dismemberment kit: circular saw and tarp  [" + dismemberKey.Value + "]")) DismembermentKit();
+            instantWrap = GUILayout.Toggle(instantWrap, "Instant body bag wrapping");
+            if (GUILayout.Button("Cover-up kit: raincoat, occult robe and gloves  [" + coverKey.Value + "]")) CoverUpKit();
+
+            GUILayout.Space(6);
+            GUILayout.Label("=== SPEED UP ACTIONS ===");
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Speed: " + attackSpeed.ToString("0.#") + "x", GUILayout.Width(90));
+            attackSpeed = Mathf.Round(GUILayout.HorizontalSlider(attackSpeed, 1f, 10f) * 2f) / 2f;
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            fastAttack = GUILayout.Toggle(fastAttack, "Attack kills", GUILayout.Width(150));
+            fastDismember = GUILayout.Toggle(fastDismember, "Dismembering", GUILayout.Width(150));
+            fastWash = GUILayout.Toggle(fastWash, "Washing weapons", GUILayout.Width(150));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            fastShower = GUILayout.Toggle(fastShower, "Showering", GUILayout.Width(150));
+            fastDispose = GUILayout.Toggle(fastDispose, "Corpse disposal (incinerator, dumpster, wood chipper, burying)");
+            GUILayout.EndHorizontal();
+            GUILayout.Label("The whole game runs at that speed only while the action plays, then goes back to normal. Hold " + fastForwardKey.Value +
+                            " to fast-forward anything else, like cutscenes (voiced lines keep their normal speed, so some scenes still wait for the voice).");
 
             if (GUILayout.Button("Teleport blood-clean kit to me (mop, bucket, bleach, body bag box)  [" + cleanupKey.Value + "]")) CleanupKit();
             instantDisposal = GUILayout.Toggle(instantDisposal, "No time limit on disposal: incinerator, kiln and washing machine finish instantly");
@@ -2837,6 +3440,9 @@ namespace YanSimModMenu
             if (instantMatch) GUILayout.Label("Affection is maxed. The rival is matchmade when the day ends, even on Monday. (Turns off instant rejection and instant expel.)");
             GUILayout.Space(6);
             GUILayout.Label("=== 1980s CUSTOM MODE ===");
+            alwaysYakuza = GUILayout.Toggle(alwaysYakuza, "Always unlock the yakuza, with every service (1980s)");
+            voidGoddess = GUILayout.Toggle(voidGoddess, "Always have the Void Goddess at school (\"Summon An Ancient Evil\")");
+            rivalSecrets = GUILayout.Toggle(rivalSecrets, "Always know the rival's embarrassing secret (gossip) and dark secret (locker note)");
             weeklyWatchers = GUILayout.Toggle(weeklyWatchers, "More students watch the rival each week (week 1: none, week 10: 6 extra)");
             showHelper = GUILayout.Toggle(showHelper, "Show the topic helper while talking to students");
             noteHelper = GUILayout.Toggle(noteHelper, "Show which subjects work when leaving a note in a locker");
@@ -3375,6 +3981,8 @@ namespace YanSimModMenu
         {
             DrawKeybinds();
             GUILayout.Space(10);
+            fastLoading = GUILayout.Toggle(fastLoading, "Faster loading screens");
+            GUILayout.Space(10);
             GUILayout.Label("=== TIME ===");
             if (clock == null)
             {
@@ -3420,7 +4028,14 @@ namespace YanSimModMenu
             GUILayout.Label("Only one of instant matchmaking / rejection / expel can be on at a time. In game, press " + elimKey.Value + " to switch between them (Enter = yes, Backspace = no).");
             bool r = GUILayout.Toggle(instantReject, "Instant rejection: sabotaging one rival interaction fills the whole rejection bar (5/5)");
             if (r != instantReject) SetElimination(r ? 2 : 0);
-            GUILayout.Label("The rival is rejected when she tries to confess on Friday.");
+            GUILayout.Label("Sabotaging one of her events with Senpai, or lowering her reputation at all, fills the bar. She's rejected when she tries to confess on Friday.");
+            if (manager != null)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label("Rejection bar right now: " + manager.SabotageProgress + "/5", GUILayout.Width(220));
+                if (GUILayout.Button("Fill it now", GUILayout.Width(110))) FillRejection("button");
+                GUILayout.EndHorizontal();
+            }
             bool x = GUILayout.Toggle(instantExpel, "Instant expel: one successful report to the counselor fills the whole expel bar (5/5)");
             if (x != instantExpel) SetElimination(x ? 3 : 0);
             GUILayout.Label("The rival is expelled right after that lecture.");

@@ -13,10 +13,8 @@ a release, and port the mod to a new game version.
 1. Open `YanSimModMenu.csproj` in Notepad. Set `<GameDir>` to your game folder, which is the folder that
    contains `YandereSimulator.exe`:
    ```xml
-   <GameDir Condition="'$(GameDir)' == ''">C:\Path\To\YandereSimulator</GameDir>
+   <GameDir>C:\Path\To\YandereSimulator</GameDir>
    ```
-   Or leave the file alone and pass the folder when you build:
-   `dotnet build -c Release -p:GameDir="C:\Path\To\YandereSimulator"`
 2. Open PowerShell **in the folder that contains the .csproj** and run:
    ```
    dotnet build -c Release
