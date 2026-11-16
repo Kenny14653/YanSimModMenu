@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 
 namespace YanSimModMenu
 {
-    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.20")]
+    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.20.1")]
     public class ModMenuPlugin : BaseUnityPlugin
     {
         ConfigEntry<KeyCode> toggleKey;
@@ -166,7 +166,9 @@ namespace YanSimModMenu
         readonly string[] tabs = { "Player", "Items", "Weapons", "Students", "Debug", "Scenes", "Extras" };
         string[] sceneNames;
         string sceneFilter = "";
-        int setHour = 13, setMinute = 0;
+        ConfigEntry<KeyCode> clockBackKey, clockFwdKey;
+        ConfigEntry<int> cfgClockStep;
+        static readonly int[] ClockSteps = { 1, 5, 10, 15, 30, 60 };
         float refreshTimer;
         string status = "";
 
@@ -337,6 +339,9 @@ namespace YanSimModMenu
             elimKey = Config.Bind("Keys", "EliminationMethodKey", KeyCode.K, "Cycle the rival elimination shortcut (off / matchmaking / rejection / expel); Enter confirms, Backspace cancels.");
             elecKey = Config.Bind("Keys", "ElectrocutionKitKey", KeyCode.N, "Teleport the drinking-fountain electrocution kit (wrench, screwdriver, power strip) to you.");
             tripKey = Config.Bind("Keys", "TripwireKitKey", KeyCode.J, "Give the tripwire items (string, masking tape) and bring a knife and a filled water cooler.");
+            clockBackKey = Config.Bind("Keys", "ClockBackKey", KeyCode.Keypad4, "Move the school clock back (hold Shift for a whole hour).");
+            clockFwdKey = Config.Bind("Keys", "ClockForwardKey", KeyCode.Keypad6, "Move the school clock forward (hold Shift for a whole hour).");
+            cfgClockStep = Config.Bind("Saved", "ClockStepMinutes", 10, "Minutes the clock keys move per press.");
             fastForwardKey = Config.Bind("Keys", "FastForwardHoldKey", KeyCode.BackQuote, "Hold to fast-forward anything (cutscenes too) at the action speed.");
             coverKey = Config.Bind("Keys", "CoverUpKitKey", KeyCode.H, "Teleport the things that hide blood to you (raincoat, occult robe, gloves).");
             dismemberKey = Config.Bind("Keys", "DismembermentKitKey", KeyCode.U, "Teleport the dismemberment kit (circular saw and tarp) to you.");
@@ -1680,6 +1685,8 @@ namespace YanSimModMenu
             KeyRow("Teleport dismemberment kit", dismemberKey, 14);
             KeyRow("Teleport cover-up kit", coverKey, 24);
             KeyRow("Hold to fast-forward", fastForwardKey, 25);
+            KeyRow("Clock back", clockBackKey, 26);
+            KeyRow("Clock forward", clockFwdKey, 27);
             GUILayout.Label("Teleport keys (pressed together with " + teleModKey.Value + "):");
             for (int i = 0; i < 9; i++) KeyRow("   " + TeleName[i], teleSlotKeys[i], 15 + i);
             spillKeyOn = GUILayout.Toggle(spillKeyOn, "Pour key works (off: no key pours, not even the game's own Z)");
@@ -1706,6 +1713,8 @@ namespace YanSimModMenu
                 dismemberKey.Value = KeyCode.U;
                 coverKey.Value = KeyCode.H;
                 fastForwardKey.Value = KeyCode.BackQuote;
+                clockBackKey.Value = KeyCode.Keypad4;
+                clockFwdKey.Value = KeyCode.Keypad6;
                 for (int i = 0; i < 9; i++) teleSlotKeys[i].Value = KeyCode.Alpha1 + i;
                 rebinding = -1;
                 Config.Save();
@@ -1732,6 +1741,8 @@ namespace YanSimModMenu
                     all.AddRange(teleSlotKeys);
                     all.Add(coverKey);
                     all.Add(fastForwardKey);
+                    all.Add(clockBackKey);
+                    all.Add(clockFwdKey);
                     ConfigEntry<KeyCode> target = all[Mathf.Clamp(rebinding, 0, all.Count - 1)];
                     target.Value = e.keyCode;
                     Config.Save();
@@ -2751,6 +2762,12 @@ namespace YanSimModMenu
             if (KeyDown(spillKey.Value)) Safe("Pour bucket", TogglePouring);
             bool modHeld = false;
             try { modHeld = teleModKey.Value != KeyCode.None && Input.GetKey(teleModKey.Value); } catch (Exception) { }
+            // Clock keys (not while the teleport modifier is held: Alt + keypad digits teleport).
+            if (!modHeld && clock != null)
+            {
+                if (KeyDown(clockFwdKey.Value)) Safe("Clock forward", () => StepClock(+1));
+                if (KeyDown(clockBackKey.Value)) Safe("Clock back", () => StepClock(-1));
+            }
             // Without the modifier, never teleport while your hands are busy: the game uses
             // the number keys for dropping / switching what you hold.
             bool armed = false;
@@ -2762,7 +2779,9 @@ namespace YanSimModMenu
                 {
                     KeyCode k = teleSlotKeys[i] != null ? teleSlotKeys[i].Value : KeyCode.Alpha1 + i;
                     // The keypad digit still works for slots left on their default number key.
-                    if (KeyDown(k) || (k == KeyCode.Alpha1 + i && KeyDown(KeyCode.Keypad1 + i)))
+                    KeyCode pad = KeyCode.Keypad1 + i;
+                    bool padFree = !modHeld ? pad != clockBackKey.Value && pad != clockFwdKey.Value : true;   // keypad 4/6 are the clock keys without Alt
+                    if (KeyDown(k) || (k == KeyCode.Alpha1 + i && padFree && KeyDown(pad)))
                     {
                         TeleportTo(TeleSpot[i], i == 1 ? new Vector3(0.75f, 0f, 0f) : Vector3.zero);
                         Toast(status == "Teleported." ? "Teleported: " + TeleName[i] : status);
@@ -3782,6 +3801,19 @@ namespace YanSimModMenu
             SceneManager.LoadScene(index);
         }
 
+        // One press of the clock keys: the chosen step (Shift = an hour), kept between 6:00 AM and
+        // 5:59 PM so the day doesn't end by accident.
+        void StepClock(int dir)
+        {
+            if (clock == null) { Toast("The clock only exists at school."); return; }
+            bool shift = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            int step = shift ? 60 : Mathf.Max(1, cfgClockStep.Value);
+            float t = Mathf.Clamp(Mathf.Round(clock.PresentTime) + dir * step, 360f, 1079f);
+            if (hotkeyScale <= 1.001f && Time.timeScale > 0f) Time.timeScale = 1f;
+            SetClock(t);
+            Toast("Clock: " + ClockText(t));
+        }
+
         void SetClock(float minutes)
         {
             if (clock == null) { status = "Clock not found."; return; }
@@ -3867,11 +3899,14 @@ namespace YanSimModMenu
             if (GUILayout.Button("+10 minutes") && clock != null) clock.PresentTime += 10f;
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
-            GUILayout.Label("Set the clock to:", GUILayout.Width(110));
-            setHour = Mathf.RoundToInt(GUILayout.HorizontalSlider(setHour, 6f, 18f, GUILayout.Width(150)));
-            setMinute = Mathf.RoundToInt(GUILayout.HorizontalSlider(setMinute, 0f, 59f, GUILayout.Width(150)));
-            GUILayout.Label(ClockText(setHour * 60 + setMinute), GUILayout.Width(70));
-            if (GUILayout.Button("Set", GUILayout.Width(60))) { Time.timeScale = 1f; SetClock(setHour * 60 + setMinute); status = "Clock set to " + ClockText(setHour * 60 + setMinute) + "."; }
+            GUILayout.Label("Clock keys: " + clockBackKey.Value + " back, " + clockFwdKey.Value + " forward, by", GUILayout.Width(300));
+            foreach (int st in ClockSteps)
+                if (GUILayout.Toggle(cfgClockStep.Value == st, st + (st == 60 ? " hour" : " min"), GUILayout.Width(65)) && cfgClockStep.Value != st) cfgClockStep.Value = st;
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("<< Back", GUILayout.Width(100))) StepClock(-1);
+            if (GUILayout.Button("Forward >>", GUILayout.Width(100))) StepClock(+1);
+            GUILayout.Label("Hold Shift with a key or button to move a whole hour.");
             GUILayout.EndHorizontal();
             GUILayout.BeginHorizontal();
             foreach (KeyValuePair<string, int> t in new[] {

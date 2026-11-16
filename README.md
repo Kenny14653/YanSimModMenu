@@ -63,6 +63,7 @@ These are for playing with the menu **closed**. You can rebind every key on the 
 | **K** | Switch rival elimination shortcut (off / matchmaking / rejection / expel), then **Enter** to confirm or **Backspace** to cancel |
 | **=** (+) / numpad **+** | Speed up time like the debug menu: 2x, 3x, 4x, 5x, 10x, 15x, 20x, 25x |
 | **-** / numpad **-** | Time back to normal |
+| Numpad **4** / **6** | Move the school clock back / forward (10 minutes by default, Shift = 1 hour) |
 | **Left Alt + 1–9** | Teleport: 1 School front · 2 Classroom 2-1 · 3 Computer lab · 4 Rooftop · 5 Shower room · 6 Martial Arts · 7 Occult · 8 Gardening · 9 Light Music. Each of the 9 keys can be rebound on the Extras tab; Left Alt is still held with them |
 
 ### The tabs
@@ -108,7 +109,7 @@ Updates often replace the game folder. Go through this list after every update:
 
 These are the lines to look for in `LogOutput.log` on a working install:
 ```
-Yan Sim Mod Menu 0.20 loaded.
+Yan Sim Mod Menu 0.20.1 loaded.
 Club perk patches applied: 20/20
 Speed-up patch applied.
 Bucket spill patch applied.
@@ -142,6 +143,8 @@ changed that part of the game. The rest of the menu still works.
 ---
 
 ## Changelog
+
+**0.20.1** — The clock is set with keys instead of sliders: numpad 4 moves it back and numpad 6 forward. Each press is 1, 5, 10, 15, 30 or 60 minutes (pick on the Debug tab); hold Shift for a whole hour. It stays between 6:00 AM and 5:59 PM, and both keys can be rebound on the Extras tab.
 
 **0.20**
 - New **Scenes** tab: every scene in the game is listed and loads with one click. There's a search box and shortcuts for school, home, the title screen and the calendar. Save first: jumping into a scene the game normally reaches another way can start it with odd data.
