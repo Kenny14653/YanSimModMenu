@@ -76,6 +76,7 @@ These are for playing with the menu **closed**. You can rebind every key on the 
   Mode, a student list with bring-to-me / go-to-them, and a club filter.
 - **Debug:** the game's debug commands without the debug menu (teleports, day, uniform, week,
   progress, world and camera options).
+- **Scenes:** every scene in the game, with a search box, to load straight away. Shortcuts for school, home, title and calendar.
 - **Extras:** keybinds, time controls, Speed Up Time (no Senpai photo needed, up to 25x),
   all club perks without joining (Delinquents excluded), and easter eggs.
 
@@ -107,7 +108,7 @@ Updates often replace the game folder. Go through this list after every update:
 
 These are the lines to look for in `LogOutput.log` on a working install:
 ```
-Yan Sim Mod Menu 0.19.1 loaded.
+Yan Sim Mod Menu 0.20 loaded.
 Club perk patches applied: 20/20
 Speed-up patch applied.
 Bucket spill patch applied.
@@ -141,6 +142,10 @@ changed that part of the game. The rest of the menu still works.
 ---
 
 ## Changelog
+
+**0.20**
+- New **Scenes** tab: every scene in the game is listed and loads with one click. There's a search box and shortcuts for school, home, the title screen and the calendar. Save first: jumping into a scene the game normally reaches another way can start it with odd data.
+- Debug tab: set the clock to any time (hour and minute sliders), or jump to before class, class, lunch, cleaning or after school.
 
 **0.19.1** — With "all club perks" on, every club's changing booth works for you and gives you that club's outfit, not just your own club's (Delinquents, bullies and the student council excluded).
 

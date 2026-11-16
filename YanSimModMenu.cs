@@ -21,7 +21,7 @@ using UnityEngine.SceneManagement;
 
 namespace YanSimModMenu
 {
-    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.19.1")]
+    [BepInPlugin("local.yansim.modmenu", "Yan Sim Mod Menu", "0.20")]
     public class ModMenuPlugin : BaseUnityPlugin
     {
         ConfigEntry<KeyCode> toggleKey;
@@ -163,7 +163,10 @@ namespace YanSimModMenu
         Rect window = new Rect(30, 30, 520, 680);
         Vector2 scroll, listScroll;
         int tab;
-        readonly string[] tabs = { "Player", "Items", "Weapons", "Students", "Debug", "Extras" };
+        readonly string[] tabs = { "Player", "Items", "Weapons", "Students", "Debug", "Scenes", "Extras" };
+        string[] sceneNames;
+        string sceneFilter = "";
+        int setHour = 13, setMinute = 0;
         float refreshTimer;
         string status = "";
 
@@ -836,7 +839,8 @@ namespace YanSimModMenu
                     case 2: DrawWeaponsTab(); break;
                     case 3: DrawStudentsTab(); break;
                     case 4: DrawDebugTab(); break;
-                    case 5: DrawExtrasTab(); break;
+                    case 5: DrawScenesTab(); break;
+                    case 6: DrawExtrasTab(); break;
                 }
             }
             catch (Exception e)
@@ -3715,6 +3719,69 @@ namespace YanSimModMenu
             status = "Teleported.";
         }
 
+        static string ClockText(float minutes)
+        {
+            int m = Mathf.FloorToInt(minutes);
+            int h = (m / 60) % 24, mm = m % 60;
+            return (h % 12 == 0 ? 12 : h % 12) + ":" + mm.ToString("00") + (h < 12 ? " AM" : " PM");
+        }
+
+        // Every scene in the game's build, by name. Loading one directly skips whatever normally
+        // leads into it, so the game may have nothing set up for it (wrong day, empty save data).
+        void DrawScenesTab()
+        {
+            if (sceneNames == null) DrawScenesTabCache();
+            GUILayout.Label("=== SCENES === (" + sceneNames.Length + " in this build, current: " + SceneManager.GetActiveScene().name + ")");
+            GUILayout.Label("Loading a scene jumps straight there. Save first: scenes the game normally reaches another way may start with odd data or get stuck.");
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("School (loading screen)")) LoadSceneByName("LoadingScene");
+            if (GUILayout.Button("Home")) LoadSceneByName("HomeScene");
+            if (GUILayout.Button("Title")) LoadSceneByName("NewTitleScene");
+            if (GUILayout.Button("Calendar")) LoadSceneByName("CalendarScene");
+            if (GUILayout.Button("Reload this scene")) LoadSceneByName(SceneManager.GetActiveScene().name);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Search:", GUILayout.Width(55));
+            sceneFilter = GUILayout.TextField(sceneFilter ?? "", GUILayout.Width(250));
+            if (GUILayout.Button("Clear", GUILayout.Width(60))) sceneFilter = "";
+            GUILayout.EndHorizontal();
+            int col = 0;
+            GUILayout.BeginHorizontal();
+            for (int i = 0; i < sceneNames.Length; i++)
+            {
+                string nm = sceneNames[i];
+                if (string.IsNullOrEmpty(nm)) continue;
+                if (sceneFilter.Length > 0 && nm.IndexOf(sceneFilter, StringComparison.OrdinalIgnoreCase) < 0) continue;
+                if (GUILayout.Button(i + "  " + nm, GUILayout.Width(230))) LoadSceneByIndex(i, nm);
+                if (++col % 3 == 0) { GUILayout.EndHorizontal(); GUILayout.BeginHorizontal(); }
+            }
+            GUILayout.EndHorizontal();
+        }
+
+        void LoadSceneByName(string name)
+        {
+            if (sceneNames == null) DrawScenesTabCache();
+            int idx = sceneNames == null ? -1 : Array.FindIndex(sceneNames, x => string.Equals(x, name, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) { status = "Scene \"" + name + "\" isn't in this build."; return; }
+            LoadSceneByIndex(idx, sceneNames[idx]);
+        }
+
+        void DrawScenesTabCache()
+        {
+            int n = SceneManager.sceneCountInBuildSettings;
+            sceneNames = new string[n];
+            for (int i = 0; i < n; i++) sceneNames[i] = System.IO.Path.GetFileNameWithoutExtension(SceneUtility.GetScenePathByBuildIndex(i));
+        }
+
+        void LoadSceneByIndex(int index, string name)
+        {
+            if (open) Toggle();
+            Time.timeScale = 1f;
+            hotkeyScale = 1f;
+            Logger.LogInfo("Loading scene " + index + " (" + name + ") from the menu.");
+            SceneManager.LoadScene(index);
+        }
+
         void SetClock(float minutes)
         {
             if (clock == null) { status = "Clock not found."; return; }
@@ -3799,6 +3866,21 @@ namespace YanSimModMenu
             if (GUILayout.Button("End day (5:59 PM)")) { Time.timeScale = 1f; SetClock(1079f); }
             if (GUILayout.Button("+10 minutes") && clock != null) clock.PresentTime += 10f;
             GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("Set the clock to:", GUILayout.Width(110));
+            setHour = Mathf.RoundToInt(GUILayout.HorizontalSlider(setHour, 6f, 18f, GUILayout.Width(150)));
+            setMinute = Mathf.RoundToInt(GUILayout.HorizontalSlider(setMinute, 0f, 59f, GUILayout.Width(150)));
+            GUILayout.Label(ClockText(setHour * 60 + setMinute), GUILayout.Width(70));
+            if (GUILayout.Button("Set", GUILayout.Width(60))) { Time.timeScale = 1f; SetClock(setHour * 60 + setMinute); status = "Clock set to " + ClockText(setHour * 60 + setMinute) + "."; }
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            foreach (KeyValuePair<string, int> t in new[] {
+                new KeyValuePair<string, int>("Before class 7:05", 425), new KeyValuePair<string, int>("Class 8:30", 510),
+                new KeyValuePair<string, int>("Lunch 1:00", 780), new KeyValuePair<string, int>("Class 1:30", 810),
+                new KeyValuePair<string, int>("Cleaning 3:30", 930), new KeyValuePair<string, int>("After school 4:00", 960) })
+                if (GUILayout.Button(t.Key)) { Time.timeScale = 1f; SetClock(t.Value); status = "Clock set to " + ClockText(t.Value) + "."; }
+            GUILayout.EndHorizontal();
+            GUILayout.Label(clock != null ? "Now: " + ClockText(clock.PresentTime) + ". Going forward is safest; going back in time doesn't undo what already happened today." : "The clock only exists at school.");
             GUILayout.Label("Freeze and speed controls are on the Extras tab.");
 
             GUILayout.Space(8);
